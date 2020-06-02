@@ -106,7 +106,7 @@ void aesDecrypt(BYTE *Key, BYTE *Data, BYTE *IV, BYTE *outData, DWORD *dwOutLen)
 			CryptSetKeyParam(hKey, KP_IV, IV, 0);
 			memcpy(outData, Data, 0x10);
 			CryptDecrypt(hKey, 0, TRUE, 0, outData, dwOutLen);
-			free(keyBlob);
+			LocalFree(keyBlob);
 		}
 	}
 }
