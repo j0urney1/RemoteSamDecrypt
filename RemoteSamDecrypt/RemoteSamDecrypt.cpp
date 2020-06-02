@@ -100,11 +100,11 @@ void aesDecrypt(BYTE *Key, BYTE *Data, BYTE *IV, BYTE *outData, DWORD *dwOutLen)
 			keyBlob->Header.reserved = 0;
 			keyBlob->Header.aiKeyAlg = CALG_AES_128;
 			keyBlob->dwKeyLen = 0x10;
-			memcpy((PBYTE)keyBlob + sizeof(GENERICKEY_BLOB), Key, keyBlob->dwKeyLen);
+			RtlCopyMemory((PBYTE)keyBlob + sizeof(GENERICKEY_BLOB), Key, keyBlob->dwKeyLen);
 			CryptImportKey(hProv, (LPCBYTE)keyBlob, szBlob, 0, 0, &hKey);
 			CryptSetKeyParam(hKey, KP_MODE, (LPCBYTE)&mode, 0);
 			CryptSetKeyParam(hKey, KP_IV, IV, 0);
-			memcpy(outData, Data, 0x10);
+			RtlCopyMemory(outData, Data, 0x10);
 			CryptDecrypt(hKey, 0, TRUE, 0, outData, dwOutLen);
 			LocalFree(keyBlob);
 		}
